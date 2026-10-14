@@ -23,8 +23,9 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, "/home/anjum/PhDWork/hubbard_gme/src")
-sys.path.insert(0, "/home/anjum/PhDWork/Strasbourg_Secondment/mimiq_vqe")
+# the thesis code (hubbard_gme) and mimiq-vqe; set HUBBARD_GME_SRC / MIMIQ_VQE_DIR on another machine
+sys.path.insert(0, os.environ.get("HUBBARD_GME_SRC", "/home/anjum/PhDWork/hubbard_gme/src"))
+sys.path.insert(0, os.environ.get("MIMIQ_VQE_DIR", "/home/anjum/PhDWork/Strasbourg_Secondment/mimiq_vqe"))
 
 import exaqt
 import mimiqcircuits as mc
