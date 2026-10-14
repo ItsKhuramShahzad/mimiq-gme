@@ -1,0 +1,471 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{parskip}
+\setlength{\parskip}{8pt}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\cd}{c^\dagger}
+\newcommand{\ad}{a^\dagger}
+\newcommand{\up}{\uparrow}
+\newcommand{\dn}{\downarrow}
+
+\begin{document}
+
+\begin{center}
+{\large VQE for the Hubbard ring on MIMIQ: the equations, step by step}\\[4pt]
+Khuram Shahzad, October 2026
+\end{center}
+
+The ground state of the Hubbard ring is prepared with the variational quantum
+eigensolver (VQE) on MIMIQ and passed on to the $n$BRDM and GME analysis. All
+the equations needed for this are given below, step by step. Sites $k$ and
+orbitals $p$ are counted from 1, qubits from 0. Every formula has been checked
+numerically (Section~\ref{sec:checks}).
+
+\emph{Symbols.} $t, U, V$: model parameters; $\mathcal{U}(\boldsymbol\theta)$:
+the UCCSD circuit; $R_P(\varphi)$: the Pauli rotation gate;
+$\mathcal{R}_C$: the rotation from the orbitals to the sites; $q$: a qubit
+index; $c_{k,\sigma}$ ($a_{p,\sigma}$): annihilation operator on site $k$
+(orbital $p$) with spin $\sigma$.
+
+%-----------------------------------------------------------------------------
+\section*{The procedure in short}
+
+\emph{One Hamiltonian.} The Hamiltonian is always the full $H_e$ of
+Eq.~(\ref{eq:H}), with $t$, $U$ and $V$. It is never changed, and VQE never
+diagonalizes it: VQE only measures its expectation value. (The exact
+diagonalization, ED, of $H_e$ is used only as the reference to compare with.)
+
+\emph{Two bases for the circuit.} The qubits can stand for two different sets
+of one-electron states: the \emph{sites} (an electron on site $k$) or the
+\emph{orbitals} (an electron in a wave spread over the ring). Both describe the
+same space; a change of basis changes how states look, not the physics. The
+orbitals are used only to \emph{build the starting state}, because there it is
+a few $X$ gates; the energy and the $n$BRDMs are always measured on the sites.
+
+\emph{The steps, in order.}
+\begin{enumerate}
+  \item Hamiltonian $H_e(t,U,V)$ on the sites (Section~\ref{sec:H}).
+  \item One qubit per spin orbital and the Jordan--Wigner transformation:
+    $H_e$ becomes a sum of Pauli strings on the sites (Section~\ref{sec:jw}).
+  \item Orbitals from the $L \times L$ one-electron hopping matrix, only to
+    prepare the state (Section~\ref{sec:orbitals}).
+  \item Starting state: Hartree--Fock, the lowest orbitals filled, i.e.\ $X$
+    gates (Section~\ref{sec:hf}).
+  \item Ansatz: UCCSD with parameters $\boldsymbol\theta$, acting on the
+    orbitals (Section~\ref{sec:uccsd}).
+  \item Rotation of the state from the orbitals to the sites
+    (Section~\ref{sec:rotation}).
+  \item Energy $E(\boldsymbol\theta) = \langle H_e \rangle$ measured on MIMIQ,
+    with $U$ and $V$ included (Section~\ref{sec:energy}).
+  \item COBYLA changes $\boldsymbol\theta$ until $E(\boldsymbol\theta)$ stops
+    decreasing (Section~\ref{sec:opt}).
+  \item From the final state: $n$BRDMs and GME, compared with ED
+    (Section~\ref{sec:gme}).
+\end{enumerate}
+The circuit is therefore
+\begin{equation*}
+  |0\cdots0\rangle
+  \xrightarrow{\ X \text{ gates}\ } |\Phi_0\rangle
+  \xrightarrow{\ \mathcal{U}(\boldsymbol\theta)\ } |\Psi_{\rm orb}(\boldsymbol\theta)\rangle
+  \xrightarrow{\ \mathcal{R}_C\ } |\Psi_e(\boldsymbol\theta)\rangle
+  \ \to\ \text{measure } \langle H_e\rangle ,
+\end{equation*}
+where the first three objects are written in the orbitals and the last one on
+the sites.
+
+%-----------------------------------------------------------------------------
+\section{The Hubbard Hamiltonian}\label{sec:H}
+
+The one-dimensional extended Hubbard model with $K$ electrons on a ring of $L$
+sites is defined by the Hamiltonian
+\begin{gather}
+{H}_e = - t \sum_{k=1}^L \sum_{\sigma=\uparrow,\downarrow} \big({c}_{k,\sigma}^\dagger\,{c}_{k+1,\sigma} + {c}_{k+1,\sigma}^\dagger\,{c}_{k,\sigma}\big)
++ U \sum_{k=1}^L {n}_{k,\uparrow}\,{n}_{k,\downarrow} \nonumber\\
++ V \sum_{k=1}^L {n}_{k}\,{n}_{k+1} + \epsilon \sum_{k=1}^L {n}_{k}\,.
+\label{eq:H}
+\end{gather}
+Here $n_{k,\sigma} = \cd_{k,\sigma} c_{k,\sigma}$ is the number operator of
+site $k$ ($1 \le k \le L$) with spin $\sigma = \up, \dn$, and
+$n_k = n_{k,\up} + n_{k,\dn}$ the number of electrons on site $k$; $t$, $U$ and
+$V$ are the hopping, on-site and nearest-neighbor interaction parameters. The
+sum over sites is written out for each term: the hopping has two sums, over the bonds $(k, k+1)$ and over the
+spin, since an electron of either spin can hop and the hopping does not flip
+the spin. Because of the periodic boundary conditions, site $L+1$ coincides
+with site $1$. The detection orbital $\phi_k$ is the one localized on site $k$,
+and the spins are extracted from $n$ consecutive orbitals
+$\phi_1, \dots, \phi_n$. At fixed $K$ the $\epsilon$ term is the constant
+$\epsilon K$; we use $\epsilon = 0$. We work
+at half filling, $K = L$, in the sector with $K_\up = K_\dn = K/2$ electrons of
+each spin.
+
+Taking $t$ out of every term gives $H_e(t,U,V) = t\, H_e(1, U/t, V/t)$.
+Multiplying by $t > 0$ rescales all energies by $t$ but leaves the eigenstates
+unchanged. Hence the ground state $|\Psi_0\rangle$ depends only on $U/t$ and
+$V/t$, and its energy is $E_0(t,U,V) = t\, E_0(1, U/t, V/t)$.
+
+%-----------------------------------------------------------------------------
+\section{Spin orbitals, qubits and Jordan--Wigner}\label{sec:jw}
+
+Each spin orbital $(k,\sigma)$ is stored on one qubit; qubits are counted
+from 0:
+\begin{equation}\label{eq:qubit}
+  q(k,\sigma) = 2(k-1) + \sigma , \qquad \sigma = 0 \ (\up), \ 1 \ (\dn),
+\end{equation}
+so that site $k$ is stored on the two qubits with labels $2k-2$ ($\up$) and
+$2k-1$ ($\dn$). The labels run from $0$ to $2L-1$, so the ring needs $2L$
+qubits (12 for $L = 6$, labels $0,\dots,11$). A qubit in
+$|1\rangle$ means the spin orbital is occupied. The Jordan--Wigner
+transformation writes the operators of Eq.~(\ref{eq:H}) with Pauli matrices on
+these qubits. With $q = q(k,\sigma)$,
+\begin{equation}\label{eq:jw}
+  c_{k,\sigma} = Z_0 Z_1 \cdots Z_{q-1}\, \frac{X_q + i Y_q}{2} , \qquad
+  n_{k,\sigma} = \cd_{k,\sigma} c_{k,\sigma} = \frac{1 - Z_q}{2} .
+\end{equation}
+Here $c_{k,\sigma}$ removes the electron from the spin orbital $(k,\sigma)$
+(it maps $|1\rangle_q \to |0\rangle_q$), and $n_{k,\sigma}$ is its occupation,
+$0$ (empty, $Z_q = +1$) or $1$ (occupied, $Z_q = -1$); the string
+$Z_0 \cdots Z_{q-1}$ gives the fermion sign. For the three types of term in
+Eq.~(\ref{eq:H}) this gives, with $q = q(k,\sigma)$ and $q' = q(k+1,\sigma)$
+in the hopping, ordered so that $q < q'$,
+\begin{align}
+  \cd_{k,\sigma} c_{k+1,\sigma} + \cd_{k+1,\sigma} c_{k,\sigma}
+     &= \tfrac12 \left( X_q Z_{q+1} \cdots Z_{q'-1} X_{q'}
+                      + Y_q Z_{q+1} \cdots Z_{q'-1} Y_{q'} \right) , \label{eq:jw-hop}\\
+  n_{k,\sigma}\, n_{k',\sigma'}
+     &= \tfrac14 \left( 1 - Z_q - Z_{q'} + Z_q Z_{q'} \right) ,
+        \qquad q = q(k,\sigma) \ne q' = q(k',\sigma') , \label{eq:jw-nn}
+\end{align}
+where Eq.~(\ref{eq:jw-nn}) gives the $U$ term with $k' = k$, $\sigma = \up$,
+$\sigma' = \dn$, and the $V$ term through
+$n_k n_{k+1} = \sum_{\sigma,\sigma'} n_{k,\sigma}\, n_{k+1,\sigma'}$.
+In Eq.~(\ref{eq:jw-hop}), for $k < L$, $q' = q + 2$ and the string is the single
+$Z_{q+1}$ of the other spin on site $k$; for the ring bond ($k = L$,
+$k+1 \equiv 1$) the two qubits are $\sigma$ and $2L-2+\sigma$, and the string
+covers all the qubits in between. Example: hopping of $\up$ between sites 1
+and 2 is $\tfrac12 (X_0 Z_1 X_2 + Y_0 Z_1 Y_2)$.
+The Hamiltonian therefore becomes a sum of Pauli strings with real coefficients,
+\begin{equation}\label{eq:H-pauli}
+  H_e = \lambda_0 + \sum_{\mu} \lambda_\mu P_\mu , \qquad P_\mu \in \{I, X, Y, Z\}^{\otimes 2L} ,
+\end{equation}
+with the constant $\lambda_0 = UL/4 + VL$ at $\epsilon = 0$.
+For $L = 6$ there are 42 strings at $(t,U,V) = (1,4,0)$ (24 hopping, 18 on-site)
+and 66 at $(1,10,5)$.
+
+Bit order: MIMIQ takes qubit 0 as the lowest bit of a basis state. This
+matters only when a state vector is loaded or read out and compared with
+another convention; gates and Pauli strings refer to qubit indices and do not
+depend on it.
+
+%-----------------------------------------------------------------------------
+\section{Orbitals for preparing the state}\label{sec:orbitals}
+
+This section does not change the Hamiltonian: $H_e$ stays the full
+Hamiltonian of Eq.~(\ref{eq:H}), with $U$ and $V$. What is needed here is a
+starting state for the circuit that is easy to prepare with gates and already
+close to the ground state. It is built from one-electron states (orbitals)
+obtained from the hopping term alone, for three reasons:
+\begin{itemize}
+  \item the hopping is the only one-electron part of $H_e$, so it defines
+    one-electron states; $U$ and $V$ are interactions between electrons, and
+    they are already diagonal on the sites (they only count electrons);
+  \item at $U = V = 0$, $H_e$ is the hopping alone, and its exact ground state
+    is obtained by filling the lowest orbitals (Section~\ref{sec:hf}); for
+    $U \ne 0$ this state is the starting point that VQE improves;
+  \item finding the orbitals needs only the diagonalization of a small
+    $L \times L$ matrix, whereas the exact ground state needs the
+    diagonalization of $H_e$ in the full many-electron space (924 states for
+    $L = 6$, growing exponentially with $L$), which VQE avoids.
+\end{itemize}
+The hopping matrix of the ring (one electron, $L \times L$) is
+\begin{equation}
+  h_{kk'} = -t \left( \delta_{k',k+1} + \delta_{k',k-1} \right) , \qquad
+  1 \le k, k' \le L \ \ (\text{site } L+1 \equiv 1),
+\end{equation}
+and its eigenvectors define the orbitals $p = 1, \dots, L$, sorted by energy,
+\begin{equation}\label{eq:orbitals}
+  h = C \, \mathrm{diag}(e_1, \dots, e_L) \, C^{T} , \qquad
+  c_{k,\sigma} = \sum_{p=1}^{L} C_{kp}\, a_{p,\sigma} ,
+\end{equation}
+with $C$ real and orthogonal (row $k$: site, column $p$: orbital). The
+columns of $C$ are the eigenvectors of $h$; they form the new basis (the
+orbitals), and the eigenvalues $e_p$ are the orbital energies. For $L = 6$:
+$e_p = -2t, -t, -t, t, t, 2t$; the lowest orbital is spread evenly over the
+ring, $C_{k1} = 1/\sqrt{6}$, and the higher ones change sign more often from
+site to site. The orbitals and the sites are two bases of the same
+one-electron space, related by the orthogonal matrix $C$; nothing is lost in
+the change. The orbitals depend only on $t$, not on $U$ or $V$; they play the
+role of the Hartree--Fock orbitals of a molecule. In the
+orbital basis the spin orbital $(p,\sigma)$ is stored on qubit
+$q(p,\sigma) = 2(p-1) + \sigma$, the same rule as Eq.~(\ref{eq:qubit}).
+
+In the orbital basis the hopping is diagonal but the $U$ and $V$ terms are
+not: writing $H_e$ in the orbitals (substituting Eq.~(\ref{eq:orbitals}) into
+Eq.~(\ref{eq:H})) gives the same spectrum but many more Pauli strings
+(306 instead of 42 at $(1,4,0)$). On the sites it is the other way round. No
+basis makes both parts diagonal; this is why the problem is hard. The state is
+therefore prepared in the orbitals and rotated back to the sites
+(Section~\ref{sec:rotation}) before the full $H_e$ is measured.
+
+%-----------------------------------------------------------------------------
+\section{Hartree--Fock reference}\label{sec:hf}
+
+The reference state fills the $K/2$ lowest orbitals with both spins,
+\begin{equation}\label{eq:hf}
+  |\Phi_0\rangle = \prod_{p=1}^{K/2} \ad_{p,\up}\, \ad_{p,\dn} \, |\mathrm{vac}\rangle ,
+\end{equation}
+that is, the qubits $0, \dots, K-1$ are set to $|1\rangle$ by $X$ gates. Since
+the density is uniform ($\langle n_{k,\sigma}\rangle = 1/2$) and the on-site term
+has no exchange part,
+\begin{equation}\label{eq:ehf}
+  E_{\rm HF} = 2 \sum_{p=1}^{K/2} e_p + U \sum_{k=1}^{L} \langle n_{k,\up}\rangle\langle n_{k,\dn}\rangle
+            = 2 \sum_{p=1}^{K/2} e_p + \frac{UL}{4}
+            \;\stackrel{L=6}{=}\; -8t + \tfrac32 U \qquad (\epsilon = V = 0).
+\end{equation}
+$|\Phi_0\rangle$ is the exact ground state of $H_e$ only at $U = V = 0$; for
+$U > 0$ it is the starting point of VQE, and Eq.~(\ref{eq:ehf}) is its energy
+with the full $H_e$. The reference must be a closed shell: the last filled level must not be
+degenerate with the first empty one. This holds for $L = 6$ (levels
+$-2t, -t, -t \,|\, t, t, 2t$) but not for $L = 4$ ($-2t, 0 \,|\, 0, 2t$).
+At $U/t = 1, 4, 10$, $|\Phi_0\rangle$ (rotated to the sites) has the fidelity
+$0.980$, $0.689$ and $0.265$ with the exact ground state, against 3--19\,\% for
+the best single configuration on sites.
+
+%-----------------------------------------------------------------------------
+\section{The ansatz: UCCSD in the orbital basis}\label{sec:uccsd}
+
+Let $i,j$ run over the occupied orbitals ($1, \dots, K/2$) and $a,b$ over the
+empty ones ($K/2+1, \dots, L$). The cluster operator contains all the
+spin-conserving single and double excitations,
+\begin{equation}\label{eq:T}
+  T(\boldsymbol\theta) = \sum_{\sigma} \sum_{a,i} \theta^{\sigma}_{ai}\, \ad_{a,\sigma} a_{i,\sigma}
+  + \sum_{\text{doubles}} \theta_{a\sigma\, i\sigma\, b\sigma'\, j\sigma'}\;
+    \ad_{a,\sigma} a_{i,\sigma}\, \ad_{b,\sigma'} a_{j,\sigma'} ,
+\end{equation}
+where the doubles are of three kinds: $\up\dn$ (all $a,i,b,j$), $\up\up$ and
+$\dn\dn$ ($a<b$, $i<j$). With $o = K/2$ occupied and $v = L - K/2$ empty orbitals
+the number of parameters is
+\begin{equation}\label{eq:npar}
+  N_\theta = \underbrace{2ov}_{\text{singles}}
+           + \underbrace{(ov)^2}_{\up\dn}
+           + \underbrace{2\tbinom{o}{2}\tbinom{v}{2}}_{\up\up,\ \dn\dn}
+  \;\stackrel{o=v=3}{=}\; 18 + 81 + 18 = 117 .
+\end{equation}
+The parameters are ordered as singles $\up$, singles $\dn$, doubles $\up\dn$,
+$\up\up$, $\dn\dn$. The UCCSD state is
+\begin{equation}\label{eq:uccsd}
+  |\Psi_{\rm orb}(\boldsymbol\theta)\rangle
+  = e^{\,T(\boldsymbol\theta) - T(\boldsymbol\theta)^\dagger} |\Phi_0\rangle .
+\end{equation}
+Since $T - T^\dagger$ is anti-Hermitian, $G = i(T - T^\dagger)$ is Hermitian, and
+Jordan--Wigner turns it into Pauli strings with real coefficients that are
+linear in $\boldsymbol\theta$:
+\begin{equation}\label{eq:G}
+  e^{T - T^\dagger} = e^{-iG} , \qquad
+  G(\boldsymbol\theta) = \sum_m \gamma_m(\boldsymbol\theta)\, Q_m .
+\end{equation}
+On MIMIQ the exponential is applied with one first-order Trotter step,
+\begin{equation}\label{eq:trotter}
+  \mathcal{U}(\boldsymbol\theta) = \prod_m e^{-i \gamma_m Q_m} = \prod_m R_{Q_m}(2 \gamma_m) ,
+  \qquad R_P(\varphi) = e^{-i\varphi P/2} ,
+\end{equation}
+where $R_P$ is the Pauli rotation gate. The strings $Q_m$ do not all
+commute, so Eq.~(\ref{eq:trotter}) is not exactly Eq.~(\ref{eq:uccsd}); it
+\emph{defines} the ansatz, and the optimizer adjusts
+$\boldsymbol\theta$ for it. Every excitation conserves the number of electrons
+and $S_z$, so every factor of Eq.~(\ref{eq:trotter}) does too; the total spin
+$S^2$ is not conserved, because the 117 amplitudes are independent (not spin
+adapted). The circuit starts with the $X$ gates of Eq.~(\ref{eq:hf}). After decomposition into
+one- and two-qubit gates the circuit has 29\,298 gates (9\,024 CNOTs) for
+$L = 6$.
+
+%-----------------------------------------------------------------------------
+\section{Rotation from the orbitals back to the sites}\label{sec:rotation}
+
+$|\Psi_{\rm orb}\rangle$ is written in the orbital modes $a_{p,\sigma}$. We need
+the same physical state written in the site modes $c_{k,\sigma}$, on the same
+qubits. This is done by the unitary $\mathcal{R}_C$ defined by
+\begin{equation}\label{eq:rc}
+  \mathcal{R}_C\, \ad_{p,\sigma}\, \mathcal{R}_C^\dagger = \sum_{k=1}^{L} C_{kp}\, \cd_{k,\sigma} , \qquad
+  \mathcal{R}_C |\mathrm{vac}\rangle = |\mathrm{vac}\rangle ,
+\end{equation}
+which replaces every orbital creation operator by the combination of site
+operators of Eq.~(\ref{eq:orbitals}). The state on the sites is then
+\begin{equation}\label{eq:psi}
+  |\Psi_e(\boldsymbol\theta)\rangle = \mathcal{R}_C\, \mathcal{U}(\boldsymbol\theta)\, X_0 X_1 \cdots X_{K-1} |0\cdots0\rangle .
+\end{equation}
+
+\emph{Givens decomposition.} The orthogonal matrix $C$ is brought to a diagonal
+matrix of signs by rotations $W_r$ of two neighboring rows $(p, p+1)$,
+\begin{equation}\label{eq:givens}
+  W_{N_g} \cdots W_2\, W_1\, C = D , \qquad D = \mathrm{diag}(\pm 1) ,
+  \qquad N_g = \tfrac{L(L-1)}{2} = 15 ,
+\end{equation}
+each rotation zeroing one element below the diagonal.
+A rotation by $\vartheta$ of the orbitals $p$ and $p+1$ is, for both spins, the
+fermionic unitary
+\begin{equation}
+  g_p(\vartheta) = \exp\!\Big[ \vartheta \sum_\sigma
+     \big( \ad_{p+1,\sigma} a_{p,\sigma} - \ad_{p,\sigma} a_{p+1,\sigma} \big) \Big] .
+\end{equation}
+With $q = q(p,\sigma)$, the two orbitals sit on the qubits $q$ and $q+2$, with
+the other spin on $q+1$ in between, and Jordan--Wigner gives exactly two
+commuting strings,
+\begin{equation}\label{eq:givens-jw}
+  i\vartheta \big( \ad_{p+1,\sigma} a_{p,\sigma} - \ad_{p,\sigma} a_{p+1,\sigma} \big)
+  = \frac{\vartheta}{2} \big( X_q Z_{q+1} Y_{q+2} - Y_q Z_{q+1} X_{q+2} \big) ,
+\end{equation}
+so that, without any Trotter error,
+\begin{equation}
+  g_p(\vartheta) = \prod_{\sigma}
+    R_{X_q Z_{q+1} Y_{q+2}}(\vartheta)\, R_{Y_q Z_{q+1} X_{q+2}}(-\vartheta) .
+\end{equation}
+The whole rotation $\mathcal{R}_C$ is a $Z$ gate on the qubits $q(p,\up)$ and
+$q(p,\dn)$ for every $D_{pp} = -1$, followed by the $N_g$ rotations of
+Eq.~(\ref{eq:givens}) in reverse order: $4 N_g = 60$ Pauli rotations for
+$L = 6$. Which signs occur depends on the
+numerical eigenvectors: at $t = 1$ all $D_{pp} = +1$, at $t = 0.05$
+$D_{66} = -1$.
+
+Why rotate instead of measuring in the orbital basis: the energy
+then needs only the site strings of Eq.~(\ref{eq:H-pauli}) (42 instead of 306),
+the $n$BRDMs are defined on sites and can be measured directly, and the
+Hamiltonian is used unchanged.
+
+%-----------------------------------------------------------------------------
+\section{The energy measured on MIMIQ}\label{sec:energy}
+
+For given $\boldsymbol\theta$ the circuit of Eq.~(\ref{eq:psi}) is run on
+MIMIQ, and the only output is the expectation value
+\begin{equation}\label{eq:energy}
+  E(\boldsymbol\theta) = \langle \Psi_e(\boldsymbol\theta) | H_e | \Psi_e(\boldsymbol\theta) \rangle
+  = \lambda_0 + \sum_\mu \lambda_\mu \langle P_\mu \rangle_{\boldsymbol\theta} ,
+\end{equation}
+obtained with one expectation-value instruction for the Hamiltonian of
+Eq.~(\ref{eq:H-pauli}), the constant $\lambda_0$ added
+separately. On the exact simulator (Exaqt) $\langle P_\mu\rangle$ is exact; on
+the digital twin or a device each $\langle P_\mu\rangle$ is estimated from a
+finite number of shots. By the variational principle
+$E(\boldsymbol\theta) \ge E_0$ for every $\boldsymbol\theta$.
+
+%-----------------------------------------------------------------------------
+\section{The optimization}\label{sec:opt}
+
+The parameters are found by minimizing Eq.~(\ref{eq:energy}),
+\begin{equation}
+  \boldsymbol\theta^* = \arg\min_{\boldsymbol\theta} E(\boldsymbol\theta) ,
+  \qquad E_{\rm VQE} = E(\boldsymbol\theta^*) ,
+\end{equation}
+with COBYLA, a derivative-free optimizer that needs only the energy values:
+\begin{itemize}
+  \item start: $\boldsymbol\theta = 0$, that is $|\Phi_0\rangle$ and
+    $E = E_{\rm HF}$;
+  \item chunks of 600 COBYLA iterations ($\rho_{\rm beg} = 0.2$, tolerance
+    $10^{-10}$); each chunk restarts from the best point so far, moved by a
+    random step of size $5\times10^{-4}$;
+  \item stop when the best energy has improved by less than $10^{-6}$ in 3
+    consecutive chunks, or after at most 25 chunks (15\,000 energy evaluations).
+\end{itemize}
+CCSD amplitudes are not used as a start: with $t = 1$ CCSD gives
+$E_{\rm CCSD} = -6.6011$, $-3.7171$ and $-5.5382$ at $U = 1$, $4$ and $10$,
+against $E_0 = -6.6012$, $-3.6687$ and $-1.6644$; at large $U$ it is far below
+$E_0$ (it is not variational).
+
+%-----------------------------------------------------------------------------
+\section{After convergence: $n$BRDMs and GME}\label{sec:gme}
+
+The state $|\Psi_e(\boldsymbol\theta^*)\rangle$ is prepared again with the same
+circuit, and the $n$BRDM of each cluster of $n$ consecutive sites is measured
+(orbitals $\phi_1, \dots, \phi_n$ and their translations) from Pauli strings, exactly as for the exact state:
+\begin{equation}
+  \Gamma^{(n)}_{\boldsymbol\alpha,\boldsymbol\alpha'}
+  = \sum_\nu w^{\boldsymbol\alpha\boldsymbol\alpha'}_\nu \langle P_\nu \rangle_{\boldsymbol\theta^*} ,
+  \qquad \rho_s = \frac{\Gamma^{(n)}}{\mathrm{Tr}\,\Gamma^{(n)}} ,
+\end{equation}
+where $\boldsymbol\alpha, \boldsymbol\alpha'$ label the spin configurations of
+the $n$ sites, $P_\nu$ are the Pauli strings on the cluster's $2n$ qubits and
+$w_\nu$ their weights. $\mathcal{C}_{\rm GME}(\rho_s)$ is computed with the GCG
+convex-roof solver. Because the VQE state may break the translation symmetry
+slightly, all $L$ clusters are measured for each $n$. For every parameter point
+we report side by side
+\begin{equation}
+  \Delta E = E_{\rm VQE} - E_0 , \quad
+  F = |\langle \Psi_0 | \Psi_e(\boldsymbol\theta^*) \rangle|^2 , \quad
+  \max |\Gamma^{(n)}_{\rm VQE} - \Gamma^{(n)}_{\rm ED}| , \quad
+  |\mathcal{C}_{\rm GME}^{\rm VQE} - \mathcal{C}_{\rm GME}^{\rm ED}| ,
+\end{equation}
+where the fidelity $F$ uses the state vector and is available only on the
+simulator. The parameter points are the $U$-scan
+($t = 1$, $V = 0$, $U = 1, \dots, 20$), the $t$-scan ($U = 10$, $V = 0$,
+$t = 0.05, \dots, 2$) and the $V$-scan ($t = 1$, $U = 10$, $V = 0, \dots, 12$),
+65 points in total, each compared with exact diagonalization (ED).
+
+%-----------------------------------------------------------------------------
+\section{What has been checked}\label{sec:checks}
+
+\begin{table}[!h]
+\centering
+\small
+\begin{tabular}{>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{6.3cm}>{\raggedright\arraybackslash}p{4.3cm}}
+  \toprule
+  Step & Check & Result \\
+  \midrule
+  $H_e$, Eq.~(\ref{eq:H}) & equal to the formula written term by term; Hermitian; conserves $K$, $S_z$, $S^2$; translation invariant & exact (5 points) \\
+  $H_e$ on MIMIQ, Eq.~(\ref{eq:H-pauli}) & $\langle H_e\rangle$ in the exact ground state $= E_0$ & $3\times10^{-15}$ ($L = 4, 6$) \\
+  Eqs.~(\ref{eq:jw-hop}), (\ref{eq:jw-nn}) & coefficients one by one; $\langle H_e\rangle$ on a random circuit & $10^{-12}$, $10^{-10}$ \\
+  Orbitals, Eq.~(\ref{eq:orbitals}) & $E_0$ equal in both bases & $10^{-10}$ (5 points) \\
+  Hartree--Fock, Eq.~(\ref{eq:ehf}) & $E(\boldsymbol\theta = 0) = -8t + \tfrac32 U$ on MIMIQ & $6.6\times10^{-14}$ \\
+  Rotation, Eq.~(\ref{eq:rc}) & exact orbital ground state $\to$ site ground state; one electron in orbital $p$ $\to$ amplitudes $C_{kp}$ & $F = 1.000000000000$ (5 points); $10^{-10}$ \\
+  Eq.~(\ref{eq:givens-jw}) & Jordan--Wigner of one Givens generator & two strings, $\pm\vartheta/2$ \\
+  $N_\theta$, Eq.~(\ref{eq:npar}) & excitations counted one by one & 18 + 99 = 117 \\
+  UCCSD, Eq.~(\ref{eq:trotter}) & conserves $K$, $S_z$; MIMIQ energy $=$ state-vector energy $\ge E_0$ & $10^{-10}$ \\
+  $n$BRDMs & from Pauli strings on MIMIQ vs.\ ED & $10^{-15}$ ($n \le 4$) \\
+  \bottomrule
+\end{tabular}
+\caption{Checks of the steps above. The five points are
+$(t,U,V) = (1,1,0)$, $(1,4,0)$, $(1,10,0)$, $(0.05,10,0)$, $(1,10,5)$.}
+\end{table}
+
+\emph{Converged UCCSD runs on MIMIQ.} $L = 6$, $t = 1$, $V = 0$, the full
+circuit of Eq.~(\ref{eq:psi}) on Exaqt, COBYLA from $\boldsymbol\theta = 0$.
+They agree with UCCSD with the exact exponential of Eq.~(\ref{eq:uccsd})
+(no Trotter step, converged with BFGS):
+\begin{center}
+\begin{tabular}{cccccc}
+  \toprule
+  & & \multicolumn{2}{c}{exact exponential} & \multicolumn{2}{c}{Trotter step, MIMIQ} \\
+  $U$ ($t=1$) & $E_0$ & $\Delta E$ & $F$ & $\Delta E$ & $F$ \\
+  \midrule
+  1  & $-6.6012$ & $1.0\times10^{-4}$ & 0.99999 & $1.6\times10^{-4}$ & 0.99997 \\
+  4  & $-3.6687$ & $3.0\times10^{-2}$ & 0.9937  & -- & -- \\
+  10 & $-1.6644$ & $3.9\times10^{-1}$ & 0.943   & $3.9\times10^{-1}$ & 0.942 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+UCCSD is accurate at small $U/t$ and degrades at large $U/t$, where the ground
+state is far from a single configuration. For large $U/t$ and for the digital
+twin (the UCCSD circuit is too deep), shallower ans\"atze such as the
+Hamiltonian variational ansatz (HVA) and the local unitary cluster Jastrow
+ansatz (LUCJ) are better suited.
+
+%-----------------------------------------------------------------------------
+\section{Practical points on MIMIQ}
+
+\begin{itemize}
+  \item The exact simulator (Exaqt) does not execute Pauli rotation gates
+    directly, also when they sit inside the Trotter block of
+    Eq.~(\ref{eq:trotter}); the circuit is first decomposed into standard
+    one- and two-qubit gates.
+  \item A Pauli rotation needs a real angle; coefficients that come out of the
+    Jordan--Wigner transformation as complex numbers with zero imaginary part
+    are passed as their real part.
+  \item The sign step of $\mathcal{R}_C$ applies $Z$ only where $D_{pp} = -1$;
+    it matters, since $D_{pp} = -1$ does occur (e.g.\ at $t = 0.05$).
+  \item The cost of one UCCSD energy evaluation for $L = 6$ on Exaqt is about
+    0.6~s on one core; a converged run needs $10^3$--$10^4$ evaluations.
+\end{itemize}
+
+\end{document}

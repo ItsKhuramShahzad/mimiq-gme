@@ -1,0 +1,113 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{parskip}
+\setlength{\parskip}{10pt}
+
+\begin{document}
+
+\begin{center}
+{\large $n$BRDMs from Pauli measurements on MIMIQ}\\[4pt]
+Khuram Shahzad, October 2026
+\end{center}
+
+On a quantum computer the state vector cannot be read out, and only the
+expectation values of Pauli strings can be measured. Here we check whether the
+$n$BRDMs, and therefore the GME concurrence, can be obtained from these
+measurements alone. As a first test we use the half-filled Hubbard ring, for
+which the exact results are already available from the thesis code.
+
+The $n$BRDM extracted from the orbitals $\phi_1,\dots,\phi_n$ is
+\begin{equation}\label{eq:nbrdm}
+  \Gamma^{(n)}_{\boldsymbol{\sigma},\boldsymbol{\sigma}'} =
+  \langle \Psi_e |\, c^\dagger_{n,\sigma'_n} \cdots c^\dagger_{1,\sigma'_1}
+  c_{1,\sigma_1} \cdots c_{n,\sigma_n} \,| \Psi_e \rangle ,
+\end{equation}
+and the spin state is $\rho_s = \Gamma^{(n)}/\mathrm{Tr}\,\Gamma^{(n)}$.
+Since $\phi_1,\dots,\phi_n$ are different orbitals, the operator in
+Eq.~(\ref{eq:nbrdm}) can be rearranged into one pair for each orbital,
+\begin{equation}\label{eq:pairs}
+  c^\dagger_{n,\sigma'_n} \cdots c^\dagger_{1,\sigma'_1}
+  c_{1,\sigma_1} \cdots c_{n,\sigma_n}
+  = \big( c^\dagger_{1,\sigma'_1} c_{1,\sigma_1} \big)
+    \big( c^\dagger_{2,\sigma'_2} c_{2,\sigma_2} \big) \cdots
+    \big( c^\dagger_{n,\sigma'_n} c_{n,\sigma_n} \big) .
+\end{equation}
+For $n = 2$, for example,
+$c^\dagger_{2} c^\dagger_{1} c_{1} c_{2} = \big(c^\dagger_{1} c_{1}\big)\big(c^\dagger_{2} c_{2}\big)$:
+the operator $c^\dagger_{2}$ is moved to the right past $c^\dagger_{1}$ and
+$c_{1}$, and the two minus signs cancel. In general the number of exchanges is
+always even, so no sign appears. This is the form used in the code. With
+the Jordan--Wigner transformation,
+$c_j = Z_0 \cdots Z_{j-1} (X_j + iY_j)/2$, every element then becomes a linear
+combination of Pauli strings,
+\begin{equation}\label{eq:pauli}
+  \Gamma^{(n)}_{\boldsymbol{\sigma},\boldsymbol{\sigma}'}
+  = \sum_k a_k \, \langle \Psi_e | P_k | \Psi_e \rangle ,
+\end{equation}
+where the coefficients $a_k$ are known from the transformation. For the Hubbard
+ring the orbital $\phi_k$ is localized on site $k$, and it corresponds to the
+qubits $2k$ (spin up) and $2k+1$ (spin down), with the sites counted from 0.
+For a single orbital, for example, we have
+$\Gamma_{\uparrow\uparrow} = \tfrac{1}{2} - \tfrac{1}{2}\langle Z_0 \rangle$ and
+$\Gamma_{\uparrow\downarrow} = \tfrac{1}{4}(\langle X_0X_1\rangle + \langle Y_0Y_1\rangle)
+- \tfrac{i}{4}(\langle X_0Y_1\rangle - \langle Y_0X_1\rangle)$, so that six
+Pauli strings are needed.
+
+In practice, three things are passed to MIMIQ. The first is the Hamiltonian
+$H_e$ of the ring, built with the thesis code and mapped to Pauli strings by
+Jordan--Wigner; this is only used to check that $\langle H_e \rangle = E_0$.
+The second is the state $|\Psi_e\rangle$, which for now is the exact ground
+state, loaded into the Exaqt simulator as a vector of $2^{2L}$ amplitudes. Since
+MIMIQ takes qubit 0 as the lowest bit, while OpenFermion takes it as the
+highest, the bit order of the vector is reversed before loading. The third is
+the list of Pauli strings $P_k$: for each of them we add one expectation-value
+instruction to the circuit, so that all strings are measured in a single run.
+Strings that appear in more than one cluster are measured only once. What MIMIQ
+gives back is one real number for each string,
+$z_k = \langle \Psi_e | P_k | \Psi_e \rangle$, and nothing else. The $n$BRDM is
+then built outside MIMIQ from Eq.~(\ref{eq:pauli}), and normalized to unit trace.
+
+We tested this for $t = 1$, $U = 4$ and $\epsilon = V = 0$. The energy measured
+on MIMIQ agrees with the exact one to $2\times10^{-15}$ for $L = 4$
+($E_0 = -2.1027484835$) and to $3\times10^{-15}$ for $L = 6$
+($E_0 = -3.6687061789$). The $n$BRDMs agree with those computed directly by
+the thesis code to machine precision, for all clusters up to $n = 4$
+(Table~\ref{tab:check}). The number of Pauli strings grows roughly as $7^n$
+per cluster; on the exact simulator this is not a problem (0.4~s for all the
+strings with $n = 4$ and $L = 6$), but it will become the main cost when the
+expectation values are estimated from a finite number of shots.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{ccccc}
+  \toprule
+  & \multicolumn{2}{c}{$L=6$} & \multicolumn{2}{c}{max.\ difference} \\
+  \cmidrule(lr){2-3}\cmidrule(lr){4-5}
+  $n$ & clusters & Pauli strings & $L=4$ & $L=6$ \\
+  \midrule
+  1 & 6  & 37      & $4\times10^{-15}$ & $2\times10^{-16}$ \\
+  2 & 15 & 577     & $4\times10^{-15}$ & $3\times10^{-16}$ \\
+  3 & 20 & 4\,897  & $4\times10^{-15}$ & $4\times10^{-16}$ \\
+  4 & 15 & 24\,337 & $4\times10^{-15}$ & $3\times10^{-16}$ \\
+  \bottomrule
+\end{tabular}
+\caption{Number of clusters and of distinct Pauli strings, and largest
+difference between the $n$BRDMs obtained from the MIMIQ measurements and the
+exact ones. All the combinations of $n$ sites are included; the consecutive
+clusters are a subset of these.}
+\label{tab:check}
+\end{table}
+
+As a side remark, the code stores the matrix with the two spin indices
+exchanged, i.e.\ $(\Gamma^{(n)})^T$. Since $\Gamma^{(n)}$ is Hermitian this is
+its complex conjugate, which has the same GME concurrence, and for the Hubbard
+ground state the two coincide because $\Gamma^{(n)}$ is real.
+
+The next step is to compute $\mathcal{C}_{\rm GME}$ from these $n$BRDMs with
+the GCG solver and to compare it with the thesis values. After that, the exact
+state will be replaced by a state prepared on MIMIQ with VQE, and later the same
+procedure will be applied on the digital twin.
+
+\end{document}

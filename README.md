@@ -52,6 +52,39 @@ over all clusters of n sites:
 Unique Pauli strings measured for L = 6: 37 (n = 1), 577 (n = 2), 4,897 (n = 3),
 24,337 (n = 4).
 
+## VQE for the Hubbard ring
+
+The ground state of the half-filled Hubbard ring (L = 6, 12 qubits) is prepared by VQE on
+MIMIQ and compared with exact diagonalization (ED).
+
+**Reports (start here):**
+- [`docs/vqe_hubbard_mimiq_short.pdf`](docs/vqe_hubbard_mimiq_short.pdf): the procedure in
+  short, with equations, results and references (4 pages).
+- [`docs/vqe_hubbard_mimiq.pdf`](docs/vqe_hubbard_mimiq.pdf): every equation in detail.
+
+**Procedure:** Jordan-Wigner mapping (42 Pauli strings) → starting state = U = 0 ground state
+(Hartree-Fock in the hopping orbitals, rotated exactly to the sites) → ansatz (UCCSD, LUCJ or
+the Hamiltonian variational ansatz, HVA) → energy ⟨H⟩ measured on MIMIQ → COBYLA.
+For large U/t the HVA is started from the optimal angles of the previous U/t (warm start).
+
+**Main result:** HVA with 8 layers (24 parameters) and the warm start reaches a fidelity
+F ≥ 0.9992 with the exact ground state for U/t = 1 … 10.
+
+| U/t | UCCSD (117 par.) F | LUCJ (130 par.) F | HVA p = 8, warm start F |
+|---|---|---|---|
+| 1 | 0.99997 | 0.9990 | 0.99954 |
+| 10 | 0.942 | 0.634 | 0.99937 |
+
+**Code:** `hubbard_vqe_mimiq/` (`core.py`: Hamiltonian, qubit mapping, orbitals, rotation,
+UCCSD; `hva.py`; `lucj.py`), scripts in `scripts/hubbard_vqe_mimiq_*.py`.
+
+**Tests** (132, all passing):
+
+```bash
+python -m pytest -q tests/test_hubbard_vqe_mimiq.py tests/test_hubbard_vqe_mimiq_strict.py \
+                    tests/test_hubbard_vqe_mimiq_hardware.py
+```
+
 ## Requirements
 
 - Python 3.11 with `mimiqcircuits`, `mimiq-exaqt`, `openfermion`, `numpy`, `pytest`
@@ -60,8 +93,8 @@ Unique Pauli strings measured for L = 6: 37 (n = 1), 577 (n = 2), 4,897 (n = 3),
 - `hubbard_gme`, the GME thesis code (Hamiltonian, reference RDMs, GCG solver), not yet
   public
 
-The paths to both are set at the top of `tests/test_hubbard_mimiq.py`; change them to
-your local copies.
+The paths to both are set at the top of `tests/test_hubbard_mimiq.py` and
+`hubbard_vqe_mimiq/core.py`; change them to your local copies.
 
 ## Run the tests
 
@@ -77,11 +110,10 @@ python -m pytest tests/test_hubbard_mimiq.py -v
 
 ## Next steps
 
-1. C_GME from the measured RDMs, compared with the reference values.
-2. States prepared on MIMIQ by VQE instead of the exact state.
-3. Molecules (Benzene and the other benchmark molecules from mimiq-vqe).
-4. Finite-shot measurements and grouping of commuting Pauli strings.
-5. QPerfect's digital twin.
+1. nBRDMs and C_GME of the VQE states (HVA, warm start), compared with ED.
+2. Molecules (Benzene and the other benchmark molecules from mimiq-vqe).
+3. Finite-shot measurements and grouping of commuting Pauli strings.
+4. QPerfect's digital twin (a cheaper HVA circuit with the qubits ordered spin up first, then spin down, is ready).
 
 ## Author
 

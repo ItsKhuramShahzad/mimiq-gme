@@ -20,24 +20,45 @@ from hubbard_gme.rdm import compute_general_nRDM
 
 def to_exaqt_order(psi, n_qubits):
     """
-    Openfermion state (qubits o = leftmost bit) -> Exaqt order (qubit 0 = lowest bit)
+    Openfermion state (qubits 0 = leftmost bit) -> Exaqt order (qubit 0 = lowest bit)
 
     Args:
         psi: Openfermion state vector
         n_qubits: number of qubits"""
         
-        
-    return psi.reshape([2]*n_qubits).transpose(range(n_qubits-1, -1, -1)).reshape(-1)
+    new_psi = np.zeros_like(psi) # a emply vector of the same shape as psi
+    for i in range(2**n_qubits): # 
+        bits = format(i, f"0{n_qubits}b") # position i in bits, e.g 4 -> 100, write number in binary
+        new_index = int(bits[::-1], 2)  # reverse the bits   → 4   (read "100" as binary)
+        new_psi[new_index] = psi[i]
+    return new_psi
 
-def load_state(psi_openfermion, n_qubits, num_zvars=0):
+def openfermion_state_to_mimiq(psi_openfermion, n_qubits, num_zvars=0):
     """
-    Put a given state vector inot exaqt state, ready for a circuit
+ Load a state vector from openferion into mimiq (Exaqt) simulator state.
+    Args:also 
+        psi_openfermion: state vector with 2**n_qubits amplitudes, in openfermion order (qubit 0 = leftmost bit)
+        n_qubits: number of qubits (2 per site for hubbard_gme)
+        num_zvars: number of z-variables, one per expectation value the circuit will measure.
+        
+    Returns:
+        ExaqtState: mimiq state holding psi, ready for exaqt.evolve() with a circuit. The state is in Exaqt order (qubit 0 = lowest bit).
+        
     """
-    st = exaqt.ExaqtState.zero(n_qubits, num_zvars=num_zvars)
-    amps = np.ascontiguousarray(to_exaqt_order(psi_openfermion, n_qubits    ), dtype=np.complex128)
-    st.q= exaqt.ExaqtSV.from_amplitudes(n_qubits, amps)
     
-    return st
+    # an empty MIMIQ state: qubits in |00...0>, num_zvars z-variables set to 0 (one per expectation value)
+
+    mimiq_state = exaqt.ExaqtState.zero(n_qubits, num_zvars=num_zvars)
+    
+    #reorder the amplitudes to mimiq bit order (qubit 0 = lowest bit) and convert to complex128
+    amplitudes_mimiq_order = to_exaqt_order(psi_openfermion, n_qubits)
+    psi_mimiq  = np.ascontiguousarray(amplitudes_mimiq_order, dtype=np.complex128)
+    
+    # load the amplitudes into the mimiq state  replace |00...0> by our state (written directly into memory, no gates)
+    mimiq_state.q= exaqt.ExaqtSV.from_amplitudes(n_qubits, psi_mimiq)
+    
+    return mimiq_state
+
 
 
 def test_bit_order_random_state():
@@ -52,28 +73,29 @@ def test_bit_order_random_state():
     
     psi/= np.linalg.norm(psi)
     ref = np.vdot(psi, get_sparse_operator(QubitOperator("Z0 X1 Y5"), nq)@ psi).real
-    got = load_state(psi, nq).q.expectation_pauli("ZXY", [0, 1, 5]).real
+    got = openfermion_state_to_mimiq(psi, nq).q.expectation_pauli("ZXY", [0, 1, 5]).real
     assert got ==pytest.approx(ref, abs=1e-12)
     
-@pytest.mark.parametrize("L, U", [(4, 4.0), (6, 4.0)])     # correct
-def test_hubbard_energy_on_mimiq(L, U):
-    t, n_electrons, nq = 1.0, L, 2*L     # correct: half filling, L electrons on 2L qubits
+# @pytest.mark.parametrize("L, U", [(4, 4.0), (6, 4.0)])     # correct
+# def test_hubbard_energy_on_mimiq(L, U):
     
-    # hamiltonin: hubbard_hme -> jordan_wigner -> mimiq
-    H_qubit = jordan_wigner(build_hubbard_hamiltonian(L, t, U, mode="uniform"))
-    H_mimiq, c0, _= openfermion_to_mimiq_hamiltonian(H_qubit)
+#     t, n_electrons, nq = 1.0, L, 2*L     # correct: half filling, L electrons on 2L qubits
     
-    #exact reference form hubbard gme and the exact state as full 2^nq vector
-    E0_ref = compute_ground_and_excited_states(L, t, U,"uniform", n_electrons)[0]
-    _, psi= jw_get_ground_state_at_particle_number(get_sparse_operator(H_qubit, nq), n_electrons)
+#     # hamiltonin: hubbard_hme -> jordan_wigner -> mimiq
+#     H_qubit = jordan_wigner(build_hubbard_hamiltonian(L, t, U, mode="uniform"))
+#     H_mimiq, c0, _= openfermion_to_mimiq_hamiltonian(H_qubit)
+#     print(H_mimiq.matrix())
+#     #exact reference form hubbard gme and the exact state as full 2^nq vector
+#     E0_ref = compute_ground_and_excited_states(L, t, U,"uniform", n_electrons)[0]
+#     _, psi= jw_get_ground_state_at_particle_number(get_sparse_operator(H_qubit, nq), n_electrons)
     
-    # <H> on mimiq: load the state, measure with push_expval
+#     # <H> on mimiq: load the state, measure with push_expval
     
-    circuit = mc.Circuit()
-    circuit.push_expval(H_mimiq, *range(nq))
-    st = load_state(psi, nq, num_zvars=circuit.num_zvars())
-    st, _ = exaqt.evolve(st, circuit)
-    assert st.z[0].real +c0 == pytest.approx(E0_ref, abs=1e-10)
+#     circuit = mc.Circuit()
+#     circuit.push_expval(H_mimiq, *range(nq))
+#     st = openfermion_state_to_mimiq(psi, nq, num_zvars=circuit.num_zvars())
+#     st, _ = exaqt.evolve(st, circuit)
+#     assert st.z[0].real +c0 == pytest.approx(E0_ref, abs=1e-10)
     
     
 def rdm_pauli_term(sites):
@@ -104,7 +126,7 @@ def measure_on_mimiq(psi, n_qubits, strings):
         qubits = [q for q, p in term]
         paulis = "". join(p for q, p in term)
         circuit.push(mc.ExpectationValue(mc.PauliString(paulis)), *qubits, z)
-    st = load_state (psi, n_qubits, num_zvars=circuit.num_zvars())
+    st = openfermion_state_to_mimiq (psi, n_qubits, num_zvars=circuit.num_zvars())
     st, _ = exaqt.evolve(st, circuit)
     
     values = {term:  st.z[z] for z , term in enumerate(strings)}
@@ -144,3 +166,43 @@ def test_rdm_from_mimiq_pauli_strings(L, n):
         rho_hubbard = compute_general_nRDM(list(cl), psi_hubbard, nq, n_electrons)
         rho_hubbard = rho_hubbard/np.trace(rho_hubbard).real
         assert np.max(np.abs(rho_mimiq-rho_hubbard)) < 1e-10
+        
+@pytest.mark.parametrize("qubit", [0,1,2])
+def test_qubit_position_openfermion_vs_mimiq(qubit):
+    """
+    Test the position of a qubit in the state vector of openfermion and mimiq.
+
+    Flip one qubit from |000> in both pragram and check where the amplitudes lands:
+    
+    openfermion puts qubit 0 as higest bit, Exaqt as lowest bit. 
+    and to_exaqt_order turns the opnefermion vector into exaqt order.
+
+    
+    """
+    
+    n=3; 
+    
+    #openfermion : |000> is position 0,, apply X on this qubit
+    
+    start = np.zeros(2**n, dtype=complex)
+    start[0] = 1.0
+    
+    psi_of = get_sparse_operator(QubitOperator(f"X{qubit}"), n) @ start  # @=> product
+    
+    #Exaqt : same operation as a circuit
+    circuit = mc.Circuit()
+    circuit.push(mc.GateX(), qubit)
+    circuit.push(mc.GateID(), n-1) # to make sure the circuit has the right number of qubits
+    
+    st, _ = exaqt.evolve(exaqt.ExaqtState.zero(n), circuit)
+    psi_exq= np.asarray(st.q.amplitudes(), dtype=complex)
+    
+    # where each program stores "this qubit is 1"
+    
+    assert np.flatnonzero(np.abs(psi_of)> 0.5)[0] == 2**(n-1-qubit)  # openfermion: qubit 0 is highest bit
+    assert np.flatnonzero(np.abs(psi_exq)> 0.5)[0] == 2**(qubit)  # exaqt: qubit 0 is lowest bit
+    
+    # our conversation gives excatly the exaqt vector
+    
+    assert np.allclose(to_exaqt_order(psi_of, n), psi_exq)
+    

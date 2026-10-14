@@ -1,0 +1,273 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{parskip}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\cd}{c^\dagger}
+\newcommand{\ad}{a^\dagger}
+\newcommand{\up}{\uparrow}
+\newcommand{\dn}{\downarrow}
+
+\begin{document}
+
+\begin{center}
+{\large\bfseries VQE for the half-filled Hubbard ring on MIMIQ:\\ procedure and first results}\\[6pt]
+Khuram Shahzad, October 2026
+\end{center}
+
+%-----------------------------------------------------------------------------
+\section{Goal}
+
+Prepare the ground state of the Hubbard ring with the
+variational quantum eigensolver (VQE)~\cite{peruzzo} on the MIMIQ simulator~\cite{mimiq}, then compute its
+$n$BRDMs and GME and compare them with exact diagonalization (ED).
+System: $L = 6$ sites, $K = 6$ electrons (half filling), $S_z = 0$, $V = 0$,
+$t = 1$; this needs 12 qubits. Code, tests and results:
+\url{https://github.com/ItsKhuramShahzad/mimiq-gme}.
+
+\begin{center}
+{\renewcommand{\arraystretch}{1.6}
+\begin{tabular}{ll}
+  \toprule
+  Symbol & Meaning \\
+  \midrule
+  $E_0^{\rm ED}$,\ \ $|\Psi_0^{\rm ED}\rangle$ & exact ground-state energy and state, from exact diagonalization (ED) \\
+  $E_1^{\rm ED}$ & exact energy of the first excited state (ED) \\
+  $\Delta = E_1^{\rm ED} - E_0^{\rm ED}$ & energy gap \\
+  $E_{\rm VQE}$,\ \ $|\Psi(\boldsymbol\theta^*)\rangle$ & lowest energy found by VQE and its state \\
+  $E_{\rm HF}$ & energy of the Hartree--Fock starting state \\
+  \bottomrule
+\end{tabular}}
+\end{center}
+
+%-----------------------------------------------------------------------------
+\section{Model}
+
+\begin{gather}
+H_e = - t \sum_{k=1}^L \sum_{\sigma} \big(\cd_{k,\sigma} c_{k+1,\sigma} + \cd_{k+1,\sigma} c_{k,\sigma}\big)
++ U \sum_{k=1}^L n_{k,\up}\, n_{k,\dn} \nonumber\\
++ V \sum_{k=1}^L n_k\, n_{k+1} + \epsilon \sum_{k=1}^L n_k , \label{eq:H}
+\end{gather}
+with $n_{k,\sigma} = \cd_{k,\sigma}c_{k,\sigma}$, $n_k = n_{k,\up} + n_{k,\dn}$
+and site $L+1 \equiv 1$ (ring). At fixed $K$ the $\epsilon$ term only adds the
+constant $\epsilon K$, so $\epsilon = 0$ is used. Since
+$H_e(t,U,V) = t\,H_e(1,U/t,V/t)$, the ground state depends only on $U/t$ and $V/t$.
+
+This Hamiltonian is never changed. VQE does not diagonalize it; it only
+measures its expectation value.
+
+%-----------------------------------------------------------------------------
+\section{From electrons to qubits (Jordan--Wigner)}
+
+One qubit per spin orbital; $|1\rangle$ = occupied, $|0\rangle$ = empty:
+\begin{equation}
+  q(k,\sigma) = 2(k-1) + \sigma , \qquad \sigma = 0\ (\up),\ 1\ (\dn),
+\end{equation}
+so the 12 qubits are $1\up, 1\dn, 2\up, 2\dn, \dots, 6\dn$. The
+Jordan--Wigner transformation~\cite{jw} is
+\begin{equation}
+  c_{k,\sigma} = Z_0 \cdots Z_{q-1}\,\tfrac12 (X_q + iY_q) , \qquad
+  n_{k,\sigma} = \tfrac12 (1 - Z_q) .
+\end{equation}
+The $Z$ string gives the fermion sign. The terms of Eq.~(\ref{eq:H}) become
+($q < q'$)
+\begin{align}
+  \cd_{q} c_{q'} + \cd_{q'} c_{q} &= \tfrac12 \big( X_q Z_{q+1}\cdots Z_{q'-1} X_{q'} + Y_q Z_{q+1}\cdots Z_{q'-1} Y_{q'} \big) , \\
+  n_q\, n_{q'} &= \tfrac14 \big( 1 - Z_q - Z_{q'} + Z_q Z_{q'} \big) .
+\end{align}
+So the Hamiltonian is a sum of Pauli strings with real coefficients,
+\begin{equation}\label{eq:Hpauli}
+  H_e = \lambda_0 + \sum_\mu \lambda_\mu P_\mu ,
+\end{equation}
+with 42 strings for $L = 6$ (24 hopping, 18 on-site) and $\lambda_0 = UL/4$.
+This step is exact: the spectrum does not change.
+
+%-----------------------------------------------------------------------------
+\section{How VQE works}
+
+A circuit with parameters $\boldsymbol\theta$ (the \emph{ansatz}) prepares a
+trial state $|\Psi(\boldsymbol\theta)\rangle$. MIMIQ measures
+\begin{equation}
+  E(\boldsymbol\theta) = \langle \Psi(\boldsymbol\theta)| H_e |\Psi(\boldsymbol\theta)\rangle
+  = \lambda_0 + \sum_\mu \lambda_\mu \langle P_\mu\rangle_{\boldsymbol\theta}
+  \;\ge\; E_0^{\rm ED} .
+\end{equation}
+A classical optimizer (COBYLA~\cite{cobyla}, which needs no gradients) changes
+$\boldsymbol\theta$ to lower $E(\boldsymbol\theta)$, and the loop repeats until
+the energy stops decreasing. By the variational principle the lowest energy
+found is an upper bound to $E_0^{\rm ED}$, and the state approaches $|\Psi_0^{\rm ED}\rangle$.
+
+%-----------------------------------------------------------------------------
+\section{Initial state}
+
+The circuit starts from the ground state at $U = 0$, which is easy to prepare.
+
+\emph{Orbitals.} Diagonalize the $L \times L$ one-electron hopping matrix
+$h_{kk'} = -t(\delta_{k',k+1} + \delta_{k',k-1})$:
+\begin{equation}
+  h = C\,\mathrm{diag}(e_1,\dots,e_L)\,C^T , \qquad
+  c_{k,\sigma} = \sum_{p} C_{kp}\, a_{p,\sigma} , \qquad
+  e_p = -2t, -t, -t, t, t, 2t .
+\end{equation}
+The orbitals are only used to build the start; the energy is always measured
+with the full $H_e$.
+
+\emph{Hartree--Fock.} Fill the three lowest orbitals with both spins:
+\begin{equation}
+  |\Phi_0\rangle = \prod_{p=1}^{3} \ad_{p,\up}\ad_{p,\dn}|\mathrm{vac}\rangle
+  = X_0 X_1 \cdots X_5 |0\cdots0\rangle , \qquad
+  E_{\rm HF} = -8t + \tfrac32 U .
+\end{equation}
+This is a closed shell for $L = 6$.
+
+\emph{Back to the sites.} The circuit $\mathcal{R}_C$ rewrites the state from
+orbitals to sites,
+\begin{equation}
+  \mathcal{R}_C\, \ad_{p,\sigma}\, \mathcal{R}_C^\dagger = \sum_k C_{kp}\,\cd_{k,\sigma} .
+\end{equation}
+It is a product of 15 Givens rotations of neighboring orbitals~\cite{kivlichan}; each one is
+exactly two Pauli rotations per spin, so there is no approximation. The state
+$\mathcal{R}_C|\Phi_0\rangle$ is the exact $U = 0$ ground state on the sites.
+Its overlap with the true ground state is $F = 0.980$, $0.689$, $0.265$ at
+$U/t = 1, 4, 10$: a good start at small $U/t$, a poor one at large $U/t$.
+
+%-----------------------------------------------------------------------------
+\section{Ans\"atze}
+
+\emph{UCCSD}~\cite{romero} (117 parameters). Single and double excitations from occupied to
+empty orbitals, $|\Psi\rangle = \mathcal{R}_C\, e^{T(\boldsymbol\theta)-T(\boldsymbol\theta)^\dagger}|\Phi_0\rangle$,
+applied with one first-order Trotter step.
+
+\emph{LUCJ}~\cite{motta} (130 parameters). Local unitary cluster Jastrow: orbital rotations
+and density--density phases, two repetitions.
+
+\emph{HVA} (Hamiltonian variational ansatz~\cite{wecker,cade}, $3p$
+parameters). Split $H_e$ into three groups whose terms commute: the on-site
+term $H_U = \sum_k n_{k\up}n_{k\dn}$, the hopping on the bonds $(1,2)$, $(3,4)$,
+$(5,6)$ ($H_A$), and the hopping on the bonds $(2,3)$, $(4,5)$, $(6,1)$ ($H_B$).
+Then
+\begin{equation}
+  |\Psi(\boldsymbol\theta)\rangle = \prod_{l=1}^{p}
+  e^{-i\theta^{(l)}_B H_B}\, e^{-i\theta^{(l)}_A H_A}\, e^{-i\theta^{(l)}_U H_U}\;
+  \mathcal{R}_C|\Phi_0\rangle .
+\end{equation}
+Inside each group all Pauli strings commute, so every layer is exact (no
+Trotter error). Every layer conserves $K$, $S_z$ and $S^2$, so the state stays a
+singlet. At $\boldsymbol\theta = 0$ it is the $U = 0$ ground state.
+
+\emph{Warm start along $U/t$.} The HVA circuit does not depend on $U$, and the
+ground state changes smoothly with $U/t$ (the gap stays open). Therefore the
+points $U/t = 1, 2, 3, 4, 5, 6, 8, 10$ are solved in this order, each one
+starting from the optimal angles of the previous one, $\boldsymbol\theta_{\rm start}(U_{j+1}) = \boldsymbol\theta^*(U_j)$.
+
+%-----------------------------------------------------------------------------
+\section{Accuracy criterion}
+
+Two quantities are reported, the energy error and the fidelity (the fidelity
+is available on the simulator):
+\begin{equation}
+  \Delta E = E_{\rm VQE} - E_0^{\rm ED} , \qquad
+  F = |\langle\Psi_0^{\rm ED}|\Psi(\boldsymbol\theta^*)\rangle|^2 .
+\end{equation}
+They are linked by the gap $\Delta = E_1^{\rm ED} - E_0^{\rm ED}$:
+\begin{equation}
+  F \;\ge\; 1 - \frac{\Delta E}{\Delta} .
+\end{equation}
+At large $U/t$ the gap is small ($\Delta = 1.66$ at $U/t = 1$, $0.27$ at
+$U/t = 10$), so a small $\Delta E$ alone does not guarantee a good state. The proposed
+criterion is $\Delta E < 0.01\,\Delta$ (which gives $F \ge 0.99$),
+together with $|\Delta \mathcal{C}_{\rm GME}| < 0.01$.
+
+%-----------------------------------------------------------------------------
+\section{Results ($L = 6$, $t = 1$, $V = 0$)}
+
+\begin{center}
+\begin{tabular}{llrcc}
+  \toprule
+  $U/t$ & ansatz & parameters & $\Delta E$ & $F$ \\
+  \midrule
+  1  & UCCSD                         & 117 & $1.6\times10^{-4}$ & 0.99997 \\
+     & LUCJ                          & 130 & $4.9\times10^{-3}$ & 0.9990 \\
+     & HVA, $p = 8$                  &  24 & $2.8\times10^{-4}$ & 0.99994 \\
+  \midrule
+  10 & UCCSD                         & 117 & $3.9\times10^{-1}$ & 0.942 \\
+     & LUCJ                          & 130 & $2.1\times10^{-1}$ & 0.634 \\
+     & HVA, $p = 8$, start $\boldsymbol\theta = 0$ & 24 & $6.6\times10^{-2}$ & 0.952 \\
+     & HVA, $p = 8$, warm start      &  24 & $3.8\times10^{-3}$ & \textbf{0.99937} \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+HVA with $p = 8$ and the warm start along $U/t$:
+\begin{center}
+\begin{tabular}{ccccc}
+  \toprule
+  $U/t$ & $\Delta$ & $\Delta E$ & $\Delta E/\Delta$ & $F$ \\
+  \midrule
+  1  & 1.656 & $2.4\times10^{-3}$ & 0.15\,\% & 0.99954 \\
+  2  & 1.313 & $2.1\times10^{-3}$ & 0.16\,\% & 0.99957 \\
+  3  & 1.009 & $3.8\times10^{-3}$ & 0.37\,\% & 0.99922 \\
+  4  & 0.770 & $3.9\times10^{-3}$ & 0.51\,\% & 0.99929 \\
+  5  & 0.601 & $4.1\times10^{-3}$ & 0.68\,\% & 0.99929 \\
+  6  & 0.485 & $3.3\times10^{-3}$ & 0.67\,\% & 0.99942 \\
+  8  & 0.349 & $3.6\times10^{-3}$ & 1.03\,\% & 0.99944 \\
+  10 & 0.274 & $3.8\times10^{-3}$ & 1.39\,\% & 0.99937 \\
+  \bottomrule
+\end{tabular}
+\end{center}
+
+Main observations:
+\begin{itemize}
+  \item At small $U/t$ every ansatz works.
+  \item At large $U/t$ a lower energy does not mean a better state: LUCJ has a
+    lower energy than UCCSD at $U/t = 10$ but a much lower fidelity, because it
+    mixes in low-lying spin excitations that cost little energy.
+  \item HVA with $p = 8$ and the warm start gives $F \ge 0.9992$ from $U/t = 1$ to
+    $10$ with only 24 parameters. The criterion $\Delta E < 0.01\,\Delta$ holds
+    up to $U/t = 6$ and is just missed at $U/t = 8$ and $10$, where the gap is small.
+  \item A test of entanglement: the entanglement entropy of 1, 2 and 3 sites of
+    the HVA states agrees with ED within $0.02$ bits.
+\end{itemize}
+
+%-----------------------------------------------------------------------------
+\section{Next steps}
+
+\begin{enumerate}
+  \item $n$BRDMs of the HVA states measured from Pauli strings on MIMIQ, GME
+    with the GCG solver, compared with ED at every $U/t$.
+  \item A cheaper circuit for the digital twin~\cite{consiglio}: ordering the qubits as
+    $1\up,\dots,6\up,1\dn,\dots,6\dn$ makes every hop (except across the ring
+    bond) a two-qubit gate, which halves the number of two-qubit gates of the
+    $p = 8$ circuit (1616 $\to$ 856), with exactly the same state.
+\end{enumerate}
+
+\begin{thebibliography}{99}
+\small
+\bibitem{peruzzo} A. Peruzzo \emph{et al.}, A variational eigenvalue solver on a photonic
+  quantum processor, Nat.\ Commun.\ \textbf{5}, 4213 (2014).
+\bibitem{mimiq} MIMIQ quantum circuit simulator, QPerfect, \url{https://qperfect.io}.
+\bibitem{jw} P. Jordan and E. Wigner, \"Uber das Paulische \"Aquivalenzverbot,
+  Z.\ Phys.\ \textbf{47}, 631 (1928).
+\bibitem{cobyla} M. J. D. Powell, A direct search optimization method that models the
+  objective and constraint functions by linear interpolation, in \emph{Advances in
+  Optimization and Numerical Analysis} (Kluwer, 1994), pp.\ 51--67.
+\bibitem{kivlichan} I. D. Kivlichan \emph{et al.}, Quantum simulation of electronic
+  structure with linear depth and connectivity, Phys.\ Rev.\ Lett.\ \textbf{120}, 110501 (2018).
+\bibitem{romero} J. Romero \emph{et al.}, Strategies for quantum computing molecular
+  energies using the unitary coupled cluster ansatz, Quantum Sci.\ Technol.\ \textbf{4},
+  014008 (2019).
+\bibitem{motta} M. Motta \emph{et al.}, Bridging physical intuition and hardware
+  efficiency for correlated electronic states: the local unitary cluster Jastrow ansatz
+  for electronic structure, Chem.\ Sci.\ \textbf{14}, 11213 (2023).
+\bibitem{wecker} D. Wecker, M. B. Hastings and M. Troyer, Progress towards practical
+  quantum variational algorithms, Phys.\ Rev.\ A \textbf{92}, 042303 (2015).
+\bibitem{cade} C. Cade, L. Mineh, A. Montanaro and S. Stanisic, Strategies for solving
+  the Fermi--Hubbard model on near-term quantum computers, Phys.\ Rev.\ B \textbf{102},
+  235122 (2020).
+\bibitem{consiglio} M. Consiglio \emph{et al.}, Variational quantum eigensolver for
+  SU($N$) fermions, J.\ Phys.\ A \textbf{55}, 265301 (2022).
+\end{thebibliography}
+
+\end{document}
